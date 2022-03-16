@@ -4,6 +4,9 @@
 Functions for GNSSutil.
 
 Change log:
+v1.1.0 20220315 Yu Morishita
+- # as comment in read_pos and read_stations
+- Add make_3im_png
 v1.0.0 20220215 Yu Morishita
 - Original implementation
 
@@ -17,6 +20,7 @@ To do:
 
 import numpy as np
 import pandas as pd
+from matplotlib import pyplot as plt
 
 
 # %% BLH2XYZ
@@ -329,6 +333,38 @@ def dXYZ2dENU(lat, lon, dX, dY, dZ):
     return dE, dN, dU
 
 
+#%% make_3im_png
+def make_3im_png(data3, pngfile, cmap, title3, vmin=None, vmax=None, cbar=True):
+    """
+    Make png with 3 images for comparison.
+    data3 and title3 must be list with 3 elements.
+    """
+    ### Plot setting
+    interp = 'nearest'
+
+    length, width = data3[0].shape
+    figsizex = 12
+    xmergin = 4 if cbar else 0
+    figsizey = int((figsizex-xmergin)/3*length/width)+2
+
+    fig = plt.figure(figsize = (figsizex, figsizey))
+
+    for i in range(3):
+        ax = fig.add_subplot(1, 3, i+1) #index start from 1
+        im = ax.imshow(data3[i], vmin=vmin, vmax=vmax, cmap=cmap,
+                       interpolation=interp)
+        ax.set_title(title3[i])
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        if cbar: fig.colorbar(im, ax=ax)
+
+    plt.tight_layout()
+    plt.savefig(pngfile)
+    plt.close()
+
+    return
+
+
 # %% read_dENU
 def read_dENU(displ_file):
     """
@@ -376,7 +412,7 @@ def read_pos(pos_file, s_date=None, e_date=None):
     names = ['yyyy', 'mm', 'dd', 'time', 'x', 'y', 'z', 'lat', 'lon', 'h']
     usecols = ['yyyy', 'mm', 'dd', 'lat', 'lon', 'h']
     df_pos = pd.read_table(pos_file, sep='\s+', header=None, names=names,
-                           index_col=0, usecols=usecols,
+                           index_col=0, usecols=usecols, comment='#',
                            parse_dates=[['yyyy','mm','dd']])
     df_pos = df_pos.loc[s_date:e_date]
 
@@ -404,7 +440,7 @@ def read_stations(station_file, lat_s=-90, lat_n=90, lon_w=-180, lon_e=180):
     """
     names = ['stcode', 'lat', 'lon', 'h']
     df_station = pd.read_table(station_file, sep='\s+', header=None,
-                               names=names, index_col=0)
+                               names=names, index_col=0, comment='#')
 
     df_station = df_station.query('{}<=lon<={}'.format(lon_w, lon_e)).query(
         '{}<=lat<={}'.format(lat_s, lat_n))

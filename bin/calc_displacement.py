@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-v1.0.0  20220215  Yu Morishita
+v0.0.1  20220223  Yu Morishita
 
-Calculate velocities from *.pos files.
+Calculate displacements from *.pos files.
+Not completed.
 
 ====================
 Input & output files
@@ -15,19 +16,21 @@ Inputs in POSDIR:
   Format: stcode  lat  lon  h
 
 Outputs:
-- vel.txt
-  Format: stcode lat lon h vel_E vel_N vel_U s_date e_date n_day
-- vel.geojson
+- displacement.txt
+  Format: stcode dE dN dU s_date1 s_date2 s_n_day e_date1 e_date2 e_n_day
+- displacement.geojson
 
 
 =====
 Usage
 =====
-calc_vel.py [-s s_date] [-e e_date] [-d n_day_thre]
- [-a lon_w/lon_e/lat_s/lat_n] [-r stcode_ref] [--POSDIR POSDIR]
+calc_displacement.py -s s_date1 [--s2 s_date2] -e e_date1 [--e2 e_date2]
+ [-d n_day_thre] [-a lon_w/lon_e/lat_s/lat_n] [-r stcode_ref] [--POSDIR POSDIR]
 
--s  Start date (yyyymmdd) for velocity calculation (Default: all)
--e  End date (yyyymmdd) for velocity calculation (Default: all)
+-s  Start date of reference period (yyyymmdd) for displacement calculation
+--s2  End date of reference period (yyyymmdd) (Default: s_date1+13days)
+-e  Start date of secondary period (yyyymmdd)
+--e2  End date of secondary period (yyyymmdd) (Default: e_date1+13days)
 -d  Threshold of the number of available days (Default: 0)
 -a  Area (Default: all stations)
 -r  Reference station code (Default: no reference)
@@ -37,8 +40,8 @@ calc_vel.py [-s s_date] [-e e_date] [-d n_day_thre]
 """
 # %% Change log
 '''
-v1.0.0  20220215  Yu Morishita
-- Original implementation
+v1.0.0  20220223  Yu Morishita
+- Original implementation (Not completed)
 '''
 
 
@@ -49,6 +52,7 @@ import sys
 import time
 import json
 import numpy as np
+import datetime as dt
 import GNSSlib
 class Usage(Exception):
     """Usage context manager"""
@@ -66,7 +70,7 @@ def main(argv=None):
 
     start = time.time()
     ver = "1.0.0"
-    date = 20220215
+    date = 20220223
     author = "Y. Morishita"
     print("\n{} ver{} {} {}".format(os.path.basename(
         argv[0]), ver, date, author), flush=True)
@@ -74,9 +78,11 @@ def main(argv=None):
         argv[0]), ' '.join(argv[1:])), flush=True)
 
     # %% Set default
-    s_date = None
+    s_date1 = None
+    s_date2 = None
+    e_date1 = None
+    e_date2 = None
     n_day_thre = 0
-    e_date = None
     area = None
     ref = None
     POSDIR = os.environ['POSDIR']
@@ -85,7 +91,7 @@ def main(argv=None):
     try:
         try:
             opts, args = getopt.getopt(argv[1:], "hs:e:d:a:r:",
-                                       ["help", "POSDIR="])
+                                       ["help", "s2=", "e2=", "POSDIR="])
         except getopt.error as msg:
             raise Usage(msg)
         for o, a in opts:
@@ -102,9 +108,17 @@ def main(argv=None):
                 area = a
             elif o == '-r':
                 ref = a
+            elif o == '--s2':
+                s_date2 = a
+            elif o == '--e2':
+                e_date2 = a
             elif o == '--POSDIR':
                 POSDIR = a
 
+        if s_date1 is None:
+            raise Usage('No s_date1 given, -s is not optional!')
+        if e_date1 is None:
+            raise Usage('No e_date1 given, -e is not optional!')
         if not os.path.exists(POSDIR):
             raise Usage('No {} exists, specify by --POSDIR option!'.format(
                 POSDIR))
@@ -120,8 +134,16 @@ def main(argv=None):
     poscor_dir = os.path.join(POSDIR, 'POSCOR')
     station_file = os.path.join(POSDIR, 'stations.txt')
 
-    vel_txt = 'vel.txt'
-    vel_geojson = 'vel.geojson'
+    d_day_default = 13
+    if s_date2 is None:
+        s_date2 = dt.datetime.strptime(s_date1, "%Y%m%d") + \
+                    dt.timedelta(days=d_day_default)
+    if e_date2 is None:
+        e_date2 = dt.datetime.strptime(e_date1, "%Y%m%d") + \
+                    dt.timedelta(days=d_day_default)
+
+    displ_txt = 'displacement.txt'
+    displ_geojson = 'displacement.geojson'
 
     if not os.path.exists(poscor_dir):
         raise FileNotFoundError('No {} exists!'.format(poscor_dir))
@@ -146,29 +168,32 @@ def main(argv=None):
         if not os.path.exists(refpos_file):
             raise FileNotFoundError('No {} exists!'.format(refpos_file))
 
-        df_refpos = GNSSlib.read_pos(refpos_file, s_date=s_date, e_date=e_date)
+        df_refpos = GNSSlib.read_pos(refpos_file, s_date=s_date, e_date=e_date2)
         lat_ref = df_refpos.lat[0] # Not read from df_station because ref could be outside of area
         lon_ref = df_refpos.lon[0]
 
-        if len(df_refpos) < n_day_thre:
-            raise ValueError("Number of available days at {} is {} "
-                             " < n_day_thre {}".format(ref, len(df_refpos),
-                                                        n_day_thre))
+        s_n_day = len(df_refpos.loc[s_date1:s_date2])
+        if s_n_day < n_day_thre:
+            raise ValueError("Number of available days at {} between {} and {}"
+                             " is {} < n_day_thre {}".format(
+                         ref, s_date1, s_date2, s_n_day, n_day_thre))
+        e_n_day = len(df_refpos.loc[e_date1:e_date2])
+        if e_n_day < n_day_thre:
+            raise ValueError("Number of available days at {} between {} and {}"
+                             " is {} < n_day_thre {}".format(
+                         ref, e_date1, e_date2, e_n_day, n_day_thre))
 
-        vel_ENU_ref, _s_date, _e_date, n_day = GNSSlib.calc_vel(
-            df_refpos, s_date=s_date, e_date=e_date)
-
-        if n_day < n_day_thre:
-            raise ValueError("Number of available days at {} is {} "
-                             " < n_day_thre {}".format(ref, n_day, n_day_thre))
+        dENU_ref, dENUstd_ref, s_n_day, e_n_day = GNSSlib.calc_displacement(
+            df_refpos, s_date1, s_date2, e_date1, e_date2)
 
 
     # %% Each pos
     features_out_list = []
-    f1 = open(vel_txt, 'w')
+    f1 = open(displ_txt, 'w')
     print('{:6s} {:>10s} {:>11s} {:>7s} {:>5s} {:>5s} {:>5s} '
-          '{:>8s} {:>8s} {:>4s}'.format('#code', 'lat', 'lon', 'height',
-                                        'vel_E', 'vel_N', 'vel_U', 's_date', 'e_date', 'nday'), file=f1)
+          '{:>8s} {:>8s} {:>8s} {:>8s} {:>4s}'.format('#code', 'lat', 'lon', 'height',
+                                        'dE', 'dN', 'dU', 's_date1', 's_date2',
+                                        'e_date1', 'e_date2', 'nday'), file=f1)
 
     for pos in df_station.itertuples():
         stcode = pos.Index
@@ -177,37 +202,38 @@ def main(argv=None):
             print("No {} exist! Skip".format(pos_file))
             continue
         else:
-            print("Calculate velocity of {}...".format(stcode))
+            print("Calculate displacement at {}...".format(stcode))
 
-        df_pos = GNSSlib.read_pos(pos_file, s_date=s_date, e_date=e_date)
+        df_pos = GNSSlib.read_pos(pos_file, s_date=s_date1, e_date=e_date2)
 
         if len(df_pos) < 2:
             print("  Available n_day is {}. Skip.".format(len(df_pos)))
             continue
 
-        vel_ENU, _s_date, _e_date, n_day = GNSSlib.calc_vel(
-            df_pos, s_date=s_date, e_date=e_date)
+        dENU, dENUstd, s_n_day, e_n_day = GNSSlib.calc_displacement(
+            df_pos, s_date1, s_date2, e_date1, e_date2)
 
-        if n_day < n_day_thre:
-            print("n_day ({}) < {}. Skip".format(n_day, n_day_thre))
+        if s_n_day < n_day_thre:
+            print("s_n_day ({}) < {}. Skip".format(s_n_day, n_day_thre))
+            continue
+        elif e_n_day < n_day_thre:
+            print("e_n_day ({}) < {}. Skip".format(e_n_day, n_day_thre))
             continue
 
         # Relative to ref
+        ### 20220223 Ref must be subtracted for each day before computing std!
         if ref is not None:
-            vel_ENU = np.array(GNSSlib.dENU_sub_ref(pos.lat, pos.lon,
-                           vel_ENU[0], vel_ENU[1], vel_ENU[2],
-                           lat_ref, lon_ref,
-                           vel_ENU_ref[0], vel_ENU_ref[1], vel_ENU_ref[2]))
+            dENU = np.array(GNSSlib.dENU_sub_ref(pos.lat, pos.lon,
+                           dENU[0], dENU[1], dENU[2], lat_ref, lon_ref,
+                           dENU_ref[0], dENU_ref[1], dENU_ref[2]))
 
-        vel_ENUmm = vel_ENU*1000 # m/yr -> mm/yr
-        _s_date = _s_date.strftime('%Y%m%d')
-        _e_date = _e_date.strftime('%Y%m%d')
+        dENUmm = dENU*1000 # m/yr -> mm/yr
 
         # txt
         print('{:6s} {:10.7f} {:11.7f} {:7.2f} {:5.1f} {:5.1f} {:5.1f} '
               '{:8s} {:8s} {:4d}'.format(stcode, pos.lat, pos.lon, pos.h,
-                                     vel_ENUmm[0], vel_ENUmm[1], vel_ENUmm[2],
-                                     _s_date, _e_date, n_day), file=f1)
+                                     dENUmm[0], dENUmm[1], dENUmm[2],
+                                     s_date1, s_date2, e_date1, e_date2, n_day), file=f1)
 
         # JSON
         feature_prop = {}
@@ -233,7 +259,7 @@ def main(argv=None):
     jsonout_dict = {'type': 'FeatureCollection',
                     'features': features_out_list}
 
-    with open(vel_geojson, 'w') as f:
+    with open(displ_geojson, 'w') as f:
         json.dump(jsonout_dict, f, indent=2)
 
     # %% Finish
@@ -244,8 +270,8 @@ def main(argv=None):
     print("\nElapsed time: {0:02}h {1:02}m {2:02}s".format(hour, minite, sec))
 
     print('\n{} Successfully finished!!\n'.format(os.path.basename(argv[0])))
-    print('Output: {}'.format(vel_txt))
-    print('        {}\n'.format(vel_geojson))
+    print('Output: {}'.format(displ_txt))
+    print('        {}\n'.format(displ_geojson))
 
 
 # %% main
