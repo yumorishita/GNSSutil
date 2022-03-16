@@ -98,7 +98,7 @@ def main(argv=None):
             elif o == '-p':
                 pt_file = a
             elif o == '-o':
-                out_file = True
+                out_file = a
             elif o == '--deramp':
                 deg = a
 

@@ -8,12 +8,16 @@ Convert ENU displacements (or velocities) to LOS.
 =====
 Usage
 =====
-dENU2LOC.py -i displ_file -e LOS_E_GeoTIFF -n LOS_N_GeoTIFF
+dENU2LOS.py -i displ_file -e LOS_E_GeoTIFF -n LOS_N_GeoTIFF
 
 -i  Input ENU displacement txt file
     Format: stcode lat lon dE dN dU
 -e  GeoTIFF file of LOS EW component
 -n  GeoTIFF file of LOS NS component
+
+Output: ${displ_file%.txt}_LOS.txt
+            Format: stcode lat lon dE dN dU dLOS LOS_E LOS_N LOS_U
+        ${displ_file%.txt}_LOS.geojson
 
 """
 # %% Change log
